@@ -409,6 +409,108 @@ class Dataset_M4(Dataset):
         return insample, insample_mask
 
 
+class TrajectoryXLSLoader(Dataset):
+    """
+    Custom loader for radar trajectory logs stored as GBK-encoded, tab-separated `.xls` files.
+    It collects bird tracks under `<root>/鸟` and UAV tracks under `<root>/无人机` or
+    `<root>/无人机单独航迹`, splits by files into train/test, and returns variable-length
+    sequences for classification.
+    """
+
+    feature_cols = [
+        '高（目标-滤波后）', '径向距离', '方位', '俯仰',
+        '点迹距离', '点迹方位', '点迹俯仰',
+        '全速度', '径向速度', '方位速度', '俯仰速度',
+        '多普勒展宽', 'JEM', 'RCS'
+    ]
+
+    def __init__(self, args, root_path, flag=None, train_ratio=0.8):
+        self.args = args
+        self.root_path = root_path
+        self.flag = str(flag or 'TRAIN').upper()
+        self.train_ratio = train_ratio
+        self.points_per_sample = getattr(args, 'track_points', 20)
+        self.class_names = ['bird', 'uav']
+
+        self.samples = self._gather_samples(root_path)
+        if len(self.samples) == 0:
+            raise RuntimeError(f'No trajectory xls files found under {root_path}')
+
+        rng = np.random.RandomState(getattr(args, 'seed', 2))
+        rng.shuffle(self.samples)
+        split_idx = int(len(self.samples) * self.train_ratio)
+        self.train_ids = set(s['id'] for s in self.samples[:split_idx])
+
+        # load all sequences, fit normalizer on train, then normalize all
+        self.seq_data, self.labels, self.feature_df = self._load_and_normalize()
+        self.max_seq_len = min(self.points_per_sample, max(len(seq) for seq in self.seq_data.values()))
+
+        # choose split
+        if self.flag in ['TRAIN', 'TRAINING']:
+            self.active_ids = [s['id'] for s in self.samples if s['id'] in self.train_ids]
+        else:
+            self.active_ids = [s['id'] for s in self.samples if s['id'] not in self.train_ids]
+
+    def _gather_samples(self, root_path):
+        samples = []
+        patterns = [
+            os.path.join(root_path, '鸟', '*.xls'),
+            os.path.join(root_path, '无人机', '**', '*.xls'),
+            os.path.join(root_path, '无人机单独航迹', '**', '*.xls'),
+        ]
+        idx = 0
+        for pattern in patterns:
+            for path in glob.glob(pattern, recursive=True):
+                label = 0 if '鸟' in path else 1
+                samples.append({'id': idx, 'path': path, 'label': label})
+                idx += 1
+        return samples
+
+    def _read_single(self, path):
+        df = pd.read_csv(path, sep='\t', encoding='gbk')
+        df = df.drop(columns=[col for col in df.columns if 'Unnamed' in col], errors='ignore')
+        missing = [c for c in self.feature_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f'Missing columns {missing} in file {path}')
+        df = df[self.feature_cols].apply(pd.to_numeric, errors='coerce')
+        df = df.interpolate(limit_direction='both')
+        df = df.fillna(method='ffill').fillna(method='bfill')
+        return df
+
+    def _load_and_normalize(self):
+        sequences = []
+        for sample in self.samples:
+            df = self._read_single(sample['path'])
+            df.index = pd.Index([sample['id']] * len(df))
+            sequences.append((sample['id'], df, sample['label']))
+
+        train_concat = pd.concat(df for sid, df, _ in sequences if sid in self.train_ids)
+        normalizer = Normalizer()
+        normalizer.normalize(train_concat)
+
+        seq_data = {}
+        labels = {}
+        concat_df = []
+        for sid, df, label in sequences:
+            df_norm = normalizer.normalize(df.copy())
+            if len(df_norm) > self.points_per_sample:
+                df_norm = df_norm.tail(self.points_per_sample)
+            seq_data[sid] = df_norm.values.astype(np.float32)
+            labels[sid] = label
+            concat_df.append(df_norm)
+        feature_df = pd.concat(concat_df, axis=0)
+        return seq_data, labels, feature_df
+
+    def __getitem__(self, ind):
+        sid = self.active_ids[ind]
+        seq = self.seq_data[sid]
+        label = self.labels[sid]
+        return torch.from_numpy(seq), torch.tensor([label], dtype=torch.long)
+
+    def __len__(self):
+        return len(self.active_ids)
+
+
 class PSMSegLoader(Dataset):
     def __init__(self, args, root_path, win_size, step=1, flag="train"):
         self.flag = flag
