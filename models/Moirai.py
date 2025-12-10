@@ -4,10 +4,15 @@ from torch import nn
 from layers.Transformer_EncDec import Encoder, EncoderLayer
 from layers.SelfAttention_Family import FullAttention, AttentionLayer
 from layers.Embed import PatchEmbedding
-from uni2ts.eval_util.plot import plot_single
-from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
-from uni2ts.model.moirai_moe import MoiraiMoEForecast, MoiraiMoEModule
-from uni2ts.model.moirai2 import Moirai2Forecast, Moirai2Module
+try:
+    from uni2ts.eval_util.plot import plot_single
+    from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
+    from uni2ts.model.moirai_moe import MoiraiMoEForecast, MoiraiMoEModule
+    from uni2ts.model.moirai2 import Moirai2Forecast, Moirai2Module
+    _UNI2TS_AVAILABLE = True
+except ImportError as err:  # pragma: no cover - optional dependency
+    _UNI2TS_AVAILABLE = False
+    _UNI2TS_IMPORT_ERR = err
 
 class Model(nn.Module):
     def __init__(self, configs):
@@ -16,6 +21,11 @@ class Model(nn.Module):
         stride: int, stride for patch_embedding
         """
         super().__init__()
+        if not _UNI2TS_AVAILABLE:
+            raise ImportError(
+                "Moirai requires the optional dependency 'uni2ts'. "
+                "Install with `pip install uni2ts` and re-run your command."
+            ) from _UNI2TS_IMPORT_ERR
         self.model = Moirai2Forecast(
             module=Moirai2Module.from_pretrained(
                 f"Salesforce/moirai-2.0-R-small",
