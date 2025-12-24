@@ -170,3 +170,5 @@ environment.txt
 .vscode/
 dataset
 mydataset
+.claude
+*.csv

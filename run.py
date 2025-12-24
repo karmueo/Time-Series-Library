@@ -160,6 +160,8 @@ if __name__ == '__main__':
     # Trajectory XLS loader
     parser.add_argument('--track_points', type=int, default=20,
                         help='Number of trajectory points per sample for trajxls loader (tail truncated)')
+    parser.add_argument('--train_ratio', type=float, default=0.8,
+                        help='Train/validation split ratio for classification and trajxls loader')
 
     args = parser.parse_args()
     if torch.cuda.is_available() and args.use_gpu:

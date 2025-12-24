@@ -47,11 +47,19 @@ def data_provider(args, flag):
         return data_set, data_loader
     elif args.task_name == 'classification':
         drop_last = False
-        data_set = Data(
-            args = args,
-            root_path=args.root_path,
-            flag=flag,
-        )
+        if args.data == 'trajxls':
+            data_set = Data(
+                args=args,
+                root_path=args.root_path,
+                flag=flag,
+                train_ratio=getattr(args, 'train_ratio', 0.8),
+            )
+        else:
+            data_set = Data(
+                args=args,
+                root_path=args.root_path,
+                flag=flag,
+            )
 
         data_loader = DataLoader(
             data_set,

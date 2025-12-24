@@ -453,15 +453,19 @@ class TrajectoryXLSLoader(Dataset):
 
     def _gather_samples(self, root_path):
         samples = []
+        # Support both English (bird/uav) and Chinese (鸟/无人机) folder names
         patterns = [
+            os.path.join(root_path, 'bird', '*.xls'),
             os.path.join(root_path, '鸟', '*.xls'),
+            os.path.join(root_path, 'uav', '**', '*.xls'),
+            os.path.join(root_path, 'uav_only', '**', '*.xls'),
             os.path.join(root_path, '无人机', '**', '*.xls'),
             os.path.join(root_path, '无人机单独航迹', '**', '*.xls'),
         ]
         idx = 0
         for pattern in patterns:
             for path in glob.glob(pattern, recursive=True):
-                label = 0 if '鸟' in path else 1
+                label = 0 if ('bird' in path or '鸟' in path) else 1
                 samples.append({'id': idx, 'path': path, 'label': label})
                 idx += 1
         return samples
