@@ -139,13 +139,17 @@ def main():
     num_features = samples[0]['data'].shape[1]
     print(f"特征维度: {num_features}")
 
-    # 归一化（按全部样本统计，保持与训练一致的处理方式）
+    # 归一化（默认使用训练数据的统计信息进行归一化，保证与训练时一致）
     norm_dir = cli_args.norm_dir or cli_args.data_dir
     if os.path.abspath(norm_dir) == os.path.abspath(cli_args.data_dir):
-        norm_samples = samples
-    else:
-        norm_files = collect_files(norm_dir)
-        norm_samples = prepare_samples(norm_files, cli_args.points_per_sample, FEATURE_COLS)
+        # 如果norm_dir与data_dir相同，默认使用训练数据目录
+        train_path = os.path.join(os.path.dirname(cli_args.data_dir), '..')
+        if os.path.exists(os.path.join(train_path, 'bird')) or os.path.exists(os.path.join(train_path, '鸟')):
+            norm_dir = train_path
+            print(f"自动使用训练数据目录进行归一化: {norm_dir}")
+
+    norm_files = collect_files(norm_dir)
+    norm_samples = prepare_samples(norm_files, cli_args.points_per_sample, FEATURE_COLS)
     if len(norm_samples) == 0:
         print("归一化统计没有有效样本，退出")
         return
