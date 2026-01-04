@@ -123,6 +123,129 @@ python scripts/augment_uav_sliding.py \
 
 ---
 
+## apps/udp_timesnet_predict.py
+
+### 作用
+
+接收航迹组播报文，解析后按 `track_id` 维护滑窗序列，使用 TimesNet 进行分类预测，并将结果打包为新的 UDP 组播报文发布。
+
+### 风险提示与回滚方案
+
+- 风险：组播地址/端口配置不当可能引发端口冲突或网络策略拦截，影响其他业务组播流量。
+- 回滚：停止该脚本，恢复原有端口/组播地址配置；若修改了防火墙/路由规则，按变更记录撤销即可。
+
+### 用法
+
+```bash
+python apps/udp_timesnet_predict.py \
+  --in_group 230.1.1.22 --in_port 8002 --in_iface 0.0.0.0 \
+  --out_group 239.0.0.1 --out_port 9000 --out_iface 0.0.0.0 \
+  --model_path /path/to/checkpoint.pth \
+  --seq_len 20 --min_seq_len 20 \
+  --stats_path /path/to/stats.json \
+  --device auto
+```
+
+### 关键参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--in_group` | 必填 | 输入组播地址 |
+| `--in_port` | 必填 | 输入端口 |
+| `--in_iface` | `0.0.0.0` | 输入网卡IP |
+| `--bind_ip` | 空 | 绑定IP，默认 `0.0.0.0` |
+| `--out_group` | 必填 | 输出组播地址 |
+| `--out_port` | 必填 | 输出端口 |
+| `--out_iface` | `0.0.0.0` | 输出网卡IP |
+| `--ttl` | 1 | 组播 TTL |
+| `--model_path` | 必填 | 模型 checkpoint 路径 |
+| `--model` | `TimesNet` | 模型类型 |
+| `--seq_len` | 20 | 序列长度 |
+| `--min_seq_len` | 20 | 最小序列长度（不足时不推理） |
+| `--stats_path` | 空 | 归一化统计文件 |
+| `--device` | auto | `auto|cpu|cuda` |
+| `--publish_interval_ms` | 0 | 发布节流毫秒（0=不节流） |
+
+### 归一化统计文件（stats.json）
+
+支持两种结构之一：
+
+1) 使用 list，与特征维度严格对齐
+```json
+{"mean":[...],"std":[...]}
+```
+
+2) 使用 dict，按特征列名匹配
+```json
+{"mean":{"高（目标-滤波后）":0.0},"std":{"高（目标-滤波后）":1.0}}
+```
+
+### 特征映射
+
+模型输入特征（14维）与报文字段对应关系如下（内部已实现）：
+- 高（目标-滤波后） -> height_m
+- 径向距离 -> r_m
+- 方位 -> a_deg
+- 俯仰 -> e_deg
+- 点迹距离 -> pr_m
+- 点迹方位 -> pa_deg
+- 点迹俯仰 -> pe_deg
+- 全速度 -> vel_m_s
+- 径向速度 -> radial_vel_m_s
+- 方位速度 -> az_vel_deg_s
+- 俯仰速度 -> el_vel_deg_s
+- 多普勒展宽 -> doppler
+- JEM -> jem
+- RCS -> rcs_db
+
+### 输出组播报文格式
+
+自定义二进制协议（见 `udp/publisher.py`）：
+- Header：`magic(2)=0xBEEF`、`version(1)`、`reserved(1)`、`seq(4)`、`count(2)`
+- Body（重复 count 次）：`track_id(2)`、`timestamp_ms(4)`、`pred(1)`、`prob_uav(4 float)`、`prob_bird(4 float)`
+- Tail：`checksum(2)`、`tail(2)=0x55AA`
+
+---
+
+## scripts/build_norm_stats.py
+
+### 作用
+
+从轨迹数据集生成归一化统计文件（mean/std），预测时可直接复用，避免重复扫描训练集。
+
+### 风险提示与回滚方案
+
+- 风险：统计文件与模型训练使用的特征/数据分布不一致会导致推理偏差。
+- 回滚：重新使用训练集目录生成统计文件，或改回 `predict_uav.py` 的自动统计模式。
+
+### 用法
+
+```bash
+python scripts/build_norm_stats.py \
+  --data_dir /path/to/train_dataset \
+  --output /path/to/stats.json
+```
+
+生成后的 `stats.json` 可在预测时通过 `scripts/predict_uav.py --stats_path` 或 `apps/udp_timesnet_predict.py --stats_path` 直接使用。
+
+### 参数说明
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--data_dir` | 必填 | 数据目录 |
+| `--output` | 必填 | 输出 stats.json 路径 |
+| `--pattern` | `*.xls` | 文件匹配模式 |
+| `--feature_cols` | 空 | 自定义特征列（逗号分隔） |
+
+### 输出格式
+
+```json
+{
+  "mean": {"高（目标-滤波后）": 0.0},
+  "std": {"高（目标-滤波后）": 1.0}
+}
+```
+
 ## run.py
 
 ### 作用
@@ -513,4 +636,3 @@ python scripts/split_trajectory_dataset.py \
   --split_value 0.3 \
   --recursive
 ```
-

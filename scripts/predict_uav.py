@@ -2,11 +2,13 @@
 使用训练好的模型对新数据进行预测。
 """
 import argparse
+import json
 import importlib
 import os
 import sys
 from pathlib import Path
 
+import time
 import pandas as pd
 import torch
 from tqdm import tqdm
@@ -24,6 +26,26 @@ FEATURE_COLS = [
     "全速度", "径向速度", "方位速度", "俯仰速度",
     "多普勒展宽", "JEM", "RCS"
 ]
+
+
+def load_stats(stats_path, feature_cols):
+    with open(stats_path, "r", encoding="utf-8") as f:
+        stats = json.load(f)
+    mean = stats.get("mean")
+    std = stats.get("std")
+    if isinstance(mean, dict) and isinstance(std, dict):
+        mean_arr = [mean.get(c, 0.0) for c in feature_cols]
+        std_arr = [std.get(c, 1.0) for c in feature_cols]
+    elif isinstance(mean, list) and isinstance(std, list):
+        if len(mean) != len(feature_cols) or len(std) != len(feature_cols):
+            raise ValueError("统计维度与特征维度不一致")
+        mean_arr = mean
+        std_arr = std
+    else:
+        raise ValueError("stats.json 结构不支持，仅支持 mean/std 的 list 或 dict")
+    mean_arr = pd.Series(mean_arr, index=feature_cols, dtype="float32")
+    std_arr = pd.Series(std_arr, index=feature_cols, dtype="float32").replace(0, 1.0)
+    return mean_arr, std_arr
 
 
 def load_gbk_xls(path, feature_cols):
@@ -114,6 +136,8 @@ def main():
     parser.add_argument('--freq', type=str, default='h', help='freq')
     parser.add_argument('--norm_dir', type=str, default=None,
                         help='归一化统计使用的数据目录(默认=--data_dir)')
+    parser.add_argument('--stats_path', type=str, default='',
+                        help='归一化统计文件(stats.json)，优先生效')
     cli_args = parser.parse_args()
 
     if cli_args.device == 'auto':
@@ -139,32 +163,39 @@ def main():
     num_features = samples[0]['data'].shape[1]
     print(f"特征维度: {num_features}")
 
-    # 归一化（默认使用训练数据的统计信息进行归一化，保证与训练时一致）
-    norm_dir = cli_args.norm_dir or cli_args.data_dir
-    if os.path.abspath(norm_dir) == os.path.abspath(cli_args.data_dir):
-        # 如果norm_dir与data_dir相同，默认使用训练数据目录
-        train_path = os.path.join(os.path.dirname(cli_args.data_dir), '..')
-        if os.path.exists(os.path.join(train_path, 'bird')) or os.path.exists(os.path.join(train_path, '鸟')):
-            norm_dir = train_path
-            print(f"自动使用训练数据目录进行归一化: {norm_dir}")
+    # 归一化（优先使用 stats.json，其次使用训练数据统计）
+    if cli_args.stats_path:
+        mean, std = load_stats(cli_args.stats_path, FEATURE_COLS)
+        for sample in samples:
+            df = pd.DataFrame(sample["data"], columns=FEATURE_COLS)
+            df_norm = (df - mean) / (std + 1e-8)
+            sample["data"] = df_norm.values.astype("float32")
+    else:
+        norm_dir = cli_args.norm_dir or cli_args.data_dir
+        if os.path.abspath(norm_dir) == os.path.abspath(cli_args.data_dir):
+            # 如果norm_dir与data_dir相同，默认使用训练数据目录
+            train_path = os.path.join(os.path.dirname(cli_args.data_dir), '..')
+            if os.path.exists(os.path.join(train_path, 'bird')) or os.path.exists(os.path.join(train_path, '鸟')):
+                norm_dir = train_path
+                print(f"自动使用训练数据目录进行归一化: {norm_dir}")
 
-    norm_files = collect_files(norm_dir)
-    norm_samples = prepare_samples(norm_files, cli_args.points_per_sample, FEATURE_COLS)
-    if len(norm_samples) == 0:
-        print("归一化统计没有有效样本，退出")
-        return
-    norm_frames = []
-    for idx, sample in enumerate(norm_samples):
-        df = pd.DataFrame(sample["data"], columns=FEATURE_COLS)
-        df.index = pd.Index([idx] * len(df))
-        norm_frames.append(df)
-    normalizer = Normalizer()
-    train_concat = pd.concat(norm_frames, axis=0)
-    normalizer.normalize(train_concat)
-    for sample in samples:
-        df = pd.DataFrame(sample["data"], columns=FEATURE_COLS)
-        df_norm = normalizer.normalize(df.copy())
-        sample["data"] = df_norm.values.astype("float32")
+        norm_files = collect_files(norm_dir)
+        norm_samples = prepare_samples(norm_files, cli_args.points_per_sample, FEATURE_COLS)
+        if len(norm_samples) == 0:
+            print("归一化统计没有有效样本，退出")
+            return
+        norm_frames = []
+        for idx, sample in enumerate(norm_samples):
+            df = pd.DataFrame(sample["data"], columns=FEATURE_COLS)
+            df.index = pd.Index([idx] * len(df))
+            norm_frames.append(df)
+        normalizer = Normalizer()
+        train_concat = pd.concat(norm_frames, axis=0)
+        normalizer.normalize(train_concat)
+        for sample in samples:
+            df = pd.DataFrame(sample["data"], columns=FEATURE_COLS)
+            df_norm = normalizer.normalize(df.copy())
+            sample["data"] = df_norm.values.astype("float32")
 
     # 3. 加载模型
     print(f"加载模型: {cli_args.model_path}")
@@ -182,6 +213,7 @@ def main():
 
     # 4. 预测
     predictions = []
+    inference_times = []
 
     print("开始预测...")
     for sample in tqdm(samples, disable=not sys.stdout.isatty(), mininterval=1.0):
@@ -196,11 +228,16 @@ def main():
         padding = padding_mask(torch.tensor([length], dtype=torch.int16),
                                max_len=cli_args.seq_len).to(cli_args.device)
 
+        start_time = time.perf_counter()
         with torch.no_grad():
             output = model(data, padding, None, None)
             prob = torch.nn.functional.softmax(output, dim=1)
             pred = torch.argmax(prob, dim=1).item()
             prob_uav = prob[0, 1].item()  # uav 概率
+        end_time = time.perf_counter()
+
+        inference_time_ms = (end_time - start_time) * 1000
+        inference_times.append(inference_time_ms)
 
         predictions.append({
             'file': os.path.basename(sample['path']),
@@ -218,9 +255,13 @@ def main():
     # 统计
     uav_count = sum(1 for p in predictions if p['prediction'] == 'uav')
     bird_count = len(predictions) - uav_count
+    avg_time = sum(inference_times) / len(inference_times) if inference_times else 0
+
     print(f"\n预测统计:")
     print(f"  无人机 (uav): {uav_count}")
     print(f"  鸟 (bird): {bird_count}")
+    print(f"\n推理时间统计:")
+    print(f"  平均推理时间: {avg_time:.2f} ms/条")
 
 
 if __name__ == '__main__':
