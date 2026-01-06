@@ -1,9 +1,15 @@
 import argparse
 import shutil
+import sys
 from pathlib import Path
 
 import pandas as pd
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from features.feature_config import get_feature_cols
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -37,22 +43,26 @@ def parse_args():
         "The other class will be copied as-is. Use 'all' to augment both classes.",
     )
     parser.add_argument(
+        "--force_class",
+        type=str,
+        default=None,
+        choices=["uav", "bird", "other"],
+        help="If set, treat all folders/files under input_dir as this class (ignore folder name). "
+        "When provided, --augment_class is ignored.",
+    )
+    parser.add_argument(
         "--recursive",
         action="store_true",
         default=True,
         help="If set, scan files recursively in subfolders (default: True).",
     )
-    parser.add_argument(
-        "--feature_cols",
-        type=str,
-        default=None,
-        help="Comma-separated list of feature columns to keep. If None, keep all columns.",
-    )
     return parser.parse_args()
 
 
-def classify_folder(folder_name: str) -> str:
+def classify_folder(folder_name: str, force_class: str | None = None) -> str:
     """根据文件夹名称分类"""
+    if force_class:
+        return force_class
     folder_lower = folder_name.lower()
     # uav 关键词
     uav_keywords = ['uav', 'drone', '无人机']
@@ -103,20 +113,22 @@ def main():
     output_root = Path(args.output_dir).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
-    # 解析 augment_class 参数，支持逗号分隔或 "all"
-    augment_classes = set(args.augment_class.split(','))
-    if 'all' in augment_classes:
-        augment_classes = {'uav', 'bird'}
-    # 验证类别有效性
-    augment_classes = augment_classes & {'uav', 'bird'}
-    if not augment_classes:
-        print(f"[ERROR] Invalid augment_class: {args.augment_class}")
-        return
+    if args.force_class:
+        # 强制归类时忽略 augment_class，仅对强制类别做增强
+        augment_classes = {args.force_class} if args.force_class in {"uav", "bird"} else set()
+    else:
+        # 解析 augment_class 参数，支持逗号分隔或 "all"
+        augment_classes = set(args.augment_class.split(','))
+        if 'all' in augment_classes:
+            augment_classes = {'uav', 'bird'}
+        # 验证类别有效性
+        augment_classes = augment_classes & {'uav', 'bird'}
+        if not augment_classes:
+            print(f"[ERROR] Invalid augment_class: {args.augment_class}")
+            return
 
-    # 解析特征列
-    feature_cols = None
-    if args.feature_cols:
-        feature_cols = [c.strip() for c in args.feature_cols.split(',')]
+    # 统一从配置文件读取特征列
+    feature_cols = get_feature_cols()
 
     min_len = args.min_len or args.window_size
 
@@ -124,7 +136,7 @@ def main():
     folder_map = {}  # {folder_path: class_name}
     for folder in input_root.iterdir():
         if folder.is_dir():
-            cls = classify_folder(folder.name)
+            cls = classify_folder(folder.name, args.force_class)
             folder_map[folder] = cls
 
     processed = 0

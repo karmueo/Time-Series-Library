@@ -14,6 +14,11 @@ import warnings
 from utils.augmentation import run_augmentation_single
 from datasets import load_dataset
 from huggingface_hub import hf_hub_download
+from features.feature_config import get_feature_cols
+try:
+    from tqdm import tqdm
+except Exception:
+    tqdm = None
 warnings.filterwarnings('ignore')
 
 HUGGINGFACE_REPO = "thuml/Time-Series-Library"
@@ -417,12 +422,9 @@ class TrajectoryXLSLoader(Dataset):
     sequences for classification.
     """
 
-    feature_cols = [
-        '高（目标-滤波后）', '径向距离', '方位', '俯仰',
-        '点迹距离', '点迹方位', '点迹俯仰',
-        '全速度', '径向速度', '方位速度', '俯仰速度',
-        '多普勒展宽', 'JEM', 'RCS'
-    ]
+    # [ ]: 训练特征
+    feature_cols = get_feature_cols()
+    _cache = {}
 
     def __init__(self, args, root_path, flag=None, train_ratio=0.8):
         self.args = args
@@ -432,18 +434,42 @@ class TrajectoryXLSLoader(Dataset):
         self.points_per_sample = getattr(args, 'track_points', 20)
         self.class_names = ['bird', 'uav']
 
-        self.samples = self._gather_samples(root_path)
-        if len(self.samples) == 0:
-            raise RuntimeError(f'No trajectory xls files found under {root_path}')
+        cache_key = (
+            os.path.abspath(root_path),
+            self.train_ratio,
+            self.points_per_sample,
+            getattr(args, 'seed', 2),
+            tuple(self.feature_cols),
+        )
+        cached = self._cache.get(cache_key)
+        if cached is None:
+            self.samples = self._gather_samples(root_path)
+            if len(self.samples) == 0:
+                raise RuntimeError(f'No trajectory xls files found under {root_path}')
 
-        rng = np.random.RandomState(getattr(args, 'seed', 2))
-        rng.shuffle(self.samples)
-        split_idx = int(len(self.samples) * self.train_ratio)
-        self.train_ids = set(s['id'] for s in self.samples[:split_idx])
+            rng = np.random.RandomState(getattr(args, 'seed', 2))
+            rng.shuffle(self.samples)
+            split_idx = int(len(self.samples) * self.train_ratio)
+            self.train_ids = set(s['id'] for s in self.samples[:split_idx])
 
-        # load all sequences, fit normalizer on train, then normalize all
-        self.seq_data, self.labels, self.feature_df = self._load_and_normalize()
-        self.max_seq_len = min(self.points_per_sample, max(len(seq) for seq in self.seq_data.values()))
+            # load all sequences, fit normalizer on train, then normalize all
+            self.seq_data, self.labels, self.feature_df = self._load_and_normalize()
+            self.max_seq_len = min(self.points_per_sample, max(len(seq) for seq in self.seq_data.values()))
+            self._cache[cache_key] = (
+                self.samples,
+                self.train_ids,
+                self.seq_data,
+                self.labels,
+                self.feature_df,
+                self.max_seq_len,
+            )
+        else:
+            (self.samples,
+             self.train_ids,
+             self.seq_data,
+             self.labels,
+             self.feature_df,
+             self.max_seq_len) = cached
 
         # choose split
         if self.flag in ['TRAIN', 'TRAINING']:
@@ -483,7 +509,10 @@ class TrajectoryXLSLoader(Dataset):
 
     def _load_and_normalize(self):
         sequences = []
-        for sample in self.samples:
+        sample_iter = self.samples
+        if tqdm is not None:
+            sample_iter = tqdm(self.samples, desc='Loading trajxls files', unit='file', ascii=True)
+        for sample in sample_iter:
             df = self._read_single(sample['path'])
             df.index = pd.Index([sample['id']] * len(df))
             sequences.append((sample['id'], df, sample['label']))
@@ -495,7 +524,10 @@ class TrajectoryXLSLoader(Dataset):
         seq_data = {}
         labels = {}
         concat_df = []
-        for sid, df, label in sequences:
+        seq_iter = sequences
+        if tqdm is not None:
+            seq_iter = tqdm(sequences, desc='Normalizing trajxls', unit='seq', ascii=True)
+        for sid, df, label in seq_iter:
             df_norm = normalizer.normalize(df.copy())
             if len(df_norm) > self.points_per_sample:
                 df_norm = df_norm.tail(self.points_per_sample)

@@ -204,7 +204,7 @@ def main():
             "count": len(targets),
             "targets": targets,
         }
-        print(json.dumps(out, ensure_ascii=True))
+        print(json.dumps(out, ensure_ascii=False, indent=2))
 
         if args.once:
             break

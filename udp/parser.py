@@ -10,51 +10,68 @@ TAR_LEN = 160
 
 
 def parse_target(data, start):
+    # Word 13: 目标状态 (b0-b3)
     status_raw = struct.unpack("=B", data[start:start + 1])[0]
     status = status_raw % 16
+    # Word 14: 批号信息（目标批号）
     tar_id = struct.unpack("=H", data[start + 2:start + 4])[0]
+    # Word 16: 目标流水号
     tar_seq = struct.unpack("=I", data[start + 6:start + 10])[0]
+    # Word 18: 航迹历史
     trk_cn = struct.unpack("=H", data[start + 10:start + 12])[0]
 
+    # Word 24: 时间 (25us)
     t1 = struct.unpack("=I", data[start + 22:start + 26])[0]
     tim = t1 * 25e-6
 
+    # Word 26, 28, 30: 滤波位置信息 (径向距离, 方位, 俯仰)
     r, a, e = struct.unpack("=2I1i", data[start + 26:start + 38])
-    r = r * 1e-1
-    a = a * 1e-5
-    e = e * 1e-5
+    r = r * 1e-1  # 0.1m
+    a = a * 1e-5  # 0.00001°
+    e = e * 1e-5  # 0.00001°
 
+    # Word 32, 34, 36: 点迹位置信息 (径向距离, 方位, 俯仰)
     pr, pa, pe = struct.unpack("=2I1i", data[start + 38:start + 50])
-    pr = pr * 1e-1
-    pa = pa * 1e-5
-    pe = pe * 1e-5
+    pr = pr * 1e-1  # 0.1m
+    pa = pa * 1e-5  # 0.00001°
+    pe = pe * 1e-5  # 0.00001°
 
+    # Word 38: 速度信息：径向速度 (0.01 m/s)
     t1 = struct.unpack("=h", data[start + 50:start + 52])[0]
     radial_vel = t1 * 1e-2
+    # Word 40: 方位速度 (0.001 °/s)
     t1 = struct.unpack("=h", data[start + 54:start + 56])[0]
     az_vel = t1 * 1e-3
+    # Word 41: 俯仰速度 (0.001 °/s)
     t1 = struct.unpack("=h", data[start + 56:start + 58])[0]
     el_vel = t1 * 1e-3
 
+    # 计算高度
     height = pr * math.sin(math.radians(pe)) + pr * pr / 17000000
 
+    # Word 42: 全速度 (0.1m/s)
     t1 = struct.unpack("=I", data[start + 58:start + 62])[0]
     vel = t1 * 1e-1
 
+    # Word 53: 目标信噪比 (0.01 dB), Word 54: RCS (0.01 dB)
     snr, rcs = struct.unpack("=Hh", data[start + 80:start + 84])
     snr = snr * 0.01
     rcs = rcs * 0.01
 
+    # Word 44: 空间加速度 (0.01 m/s²)
     t1 = struct.unpack("=H", data[start + 62:start + 64])[0]
     acc = t1 * 1e-2
 
+    # Word 45: 航向 (0.1°)
     t1 = struct.unpack("=H", data[start + 64:start + 66])[0]
     course_angle = t1 * 1e-1
 
+    # Word 55: 识别信息 (大类 b0-b7, 小类 b8-b15)
     t1 = struct.unpack("=H", data[start + 84:start + 86])[0]
     tar_big = t1 % 256
     tar_small = t1 // 256
 
+    # Word 89: 多普勒展宽, Word 91: Jem特征
     feat1 = struct.unpack("=f", data[start + 152:start + 156])[0]
     feat2 = struct.unpack("=f", data[start + 156:start + 160])[0]
     doppler = feat1
@@ -88,6 +105,33 @@ def parse_target(data, start):
         "jem": jem,
         "tar_big": tar_big,
         "tar_small": tar_small,
+        "目标状态": status,
+        "航迹状态": status,
+        "航迹历史": trk_cn,
+        "目标批号": tar_id,
+        "目标流水号": tar_seq,
+        "时间": tim,
+        "RCS": rcs,
+        "目标信噪比": snr,
+        "滤波径向距离": r,
+        "滤波方位": a,
+        "滤波俯仰": e,
+        "点迹距离": pr,
+        "点迹方位": pa,
+        "点迹俯仰": pe,
+        "高度": height,
+        "全速度": vel,
+        "径向速度": radial_vel,
+        "方位速度": az_vel,
+        "俯仰速度": el_vel,
+        "加速度": acc,
+        "航向": course_angle,
+        "Feature1": feat1,
+        "Feature5": feat2,
+        "多普勒展宽": doppler,
+        "JEM": jem,
+        "目标大类": tar_big,
+        "目标小类": tar_small,
     }
 
 

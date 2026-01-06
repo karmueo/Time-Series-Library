@@ -18,14 +18,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from data_provider.uea import Normalizer, padding_mask
+from features.feature_config import get_feature_cols
 
 
-FEATURE_COLS = [
-    "高（目标-滤波后）", "径向距离", "方位", "俯仰",
-    "点迹距离", "点迹方位", "点迹俯仰",
-    "全速度", "径向速度", "方位速度", "俯仰速度",
-    "多普勒展宽", "JEM", "RCS"
-]
+FEATURE_COLS = get_feature_cols()
 
 
 def load_stats(stats_path, feature_cols):
@@ -98,10 +94,12 @@ class Args:
         self.task_name = 'classification'
         self.seq_len = cli_args.seq_len
         self.label_len = cli_args.label_len
-        self.pred_len = 0
+        self.pred_len = cli_args.pred_len
         self.d_model = cli_args.d_model
+        self.n_heads = cli_args.n_heads
         self.enc_in = num_features
         self.e_layers = cli_args.e_layers
+        self.d_layers = cli_args.d_layers
         self.d_ff = cli_args.d_ff
         self.top_k = cli_args.top_k
         self.num_kernels = cli_args.num_kernels
@@ -123,17 +121,20 @@ def main():
                         help='模型类型')
     parser.add_argument('--seq_len', type=int, default=20, help='序列长度')
     parser.add_argument('--label_len', type=int, default=48, help='与训练一致的 label_len')
+    parser.add_argument('--pred_len', type=int, default=0, help='与训练一致的 pred_len')
     parser.add_argument('--points_per_sample', type=int, default=20, help='每个样本的点数')
     parser.add_argument('--num_classes', type=int, default=2, help='类别数')
     parser.add_argument('--device', type=str, default='auto', help='设备: auto|cpu|cuda')
     parser.add_argument('--d_model', type=int, default=64, help='d_model')
+    parser.add_argument('--n_heads', type=int, default=8, help='n_heads')
     parser.add_argument('--d_ff', type=int, default=256, help='d_ff')
     parser.add_argument('--e_layers', type=int, default=2, help='e_layers')
+    parser.add_argument('--d_layers', type=int, default=1, help='d_layers')
     parser.add_argument('--top_k', type=int, default=2, help='top_k')
     parser.add_argument('--num_kernels', type=int, default=6, help='num_kernels')
     parser.add_argument('--dropout', type=float, default=0.1, help='dropout')
     parser.add_argument('--embed', type=str, default='timeF', help='embed')
-    parser.add_argument('--freq', type=str, default='h', help='freq')
+    parser.add_argument('--freq', type=str, default='s', help='freq')
     parser.add_argument('--norm_dir', type=str, default=None,
                         help='归一化统计使用的数据目录(默认=--data_dir)')
     parser.add_argument('--stats_path', type=str, default='',

@@ -19,8 +19,11 @@ class Exp_Classification(Exp_Basic):
 
     def _build_model(self):
         # model input depends on data
+        data_start = time.time()
+        print('Loading data for model init (TRAIN/TEST)...')
         train_data, train_loader = self._get_data(flag='TRAIN')
         test_data, test_loader = self._get_data(flag='TEST')
+        print('Data ready for model init in {:.2f}s'.format(time.time() - data_start))
         self.args.seq_len = max(train_data.max_seq_len, test_data.max_seq_len)
         self.args.pred_len = 0
         self.args.enc_in = train_data.feature_df.shape[1]
@@ -77,9 +80,13 @@ class Exp_Classification(Exp_Basic):
         return total_loss, accuracy
 
     def train(self, setting):
+        data_start = time.time()
+        print('Loading data for training (TRAIN/TEST)...')
         train_data, train_loader = self._get_data(flag='TRAIN')
         vali_data, vali_loader = self._get_data(flag='TEST')
         test_data, test_loader = self._get_data(flag='TEST')
+        print('Data ready for training in {:.2f}s | train_steps: {}'.format(
+            time.time() - data_start, len(train_loader)))
 
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
@@ -99,10 +106,13 @@ class Exp_Classification(Exp_Basic):
 
             self.model.train()
             epoch_time = time.time()
+            first_batch_start = time.time()
 
             for i, (batch_x, label, padding_mask) in enumerate(train_loader):
                 iter_count += 1
                 model_optim.zero_grad()
+                if i == 0:
+                    print('\tfirst batch ready in {:.2f}s'.format(time.time() - first_batch_start))
 
                 batch_x = batch_x.float().to(self.device)
                 padding_mask = padding_mask.float().to(self.device)

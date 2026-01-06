@@ -165,6 +165,8 @@ python apps/udp_timesnet_predict.py \
 | `--stats_path` | 空 | 归一化统计文件 |
 | `--device` | auto | `auto|cpu|cuda` |
 | `--publish_interval_ms` | 0 | 发布节流毫秒（0=不节流） |
+| `--use_batch_ema` | false | 同批号目标使用EMA平滑概率并统一判别 |
+| `--ema_alpha` | 0.6 | EMA平滑系数（0-1，越大越偏向最新） |
 
 ### 归一化统计文件（stats.json）
 
@@ -200,10 +202,10 @@ python apps/udp_timesnet_predict.py \
 
 ### 输出组播报文格式
 
-自定义二进制协议（见 `udp/publisher.py`）：
-- Header：`magic(2)=0xBEEF`、`version(1)`、`reserved(1)`、`seq(4)`、`count(2)`
-- Body（重复 count 次）：`track_id(2)`、`timestamp_ms(4)`、`pred(1)`、`prob_uav(4 float)`、`prob_bird(4 float)`
-- Tail：`checksum(2)`、`tail(2)=0x55AA`
+按 `报文.md` 中“二、目标识别结果（识别->数据处理）”输出二进制报文（见 `udp/publisher.py`）：
+- Header（12 字）：`frame_header=0xA999`、`msg_type`、`frame_length`、`frame_seq`、`system_id`、`radar_id+reserve`、`year/month/day/hour/minute/second(BCD)`、`sub_second(25us)`、`reserve`
+- Body（20 字）：`target_count`、`batch_id`、`base_day(2 字)`、`time(2 字, 25us)`、`class_major`、`confidence(0.001)`、`reserve(12 字)`
+- Tail（2 字）：`checksum`、`frame_tail=0x55AA`
 
 ---
 

@@ -11,10 +11,12 @@ class ModelArgs:
         self.task_name = "classification"
         self.seq_len = seq_len
         self.label_len = model_cfg.get("label_len", 48)
-        self.pred_len = 0
+        self.pred_len = model_cfg.get("pred_len", 0)
         self.d_model = model_cfg.get("d_model", 64)
+        self.n_heads = model_cfg.get("n_heads", 8)
         self.enc_in = num_features
         self.e_layers = model_cfg.get("e_layers", 2)
+        self.d_layers = model_cfg.get("d_layers", 1)
         self.d_ff = model_cfg.get("d_ff", 256)
         self.top_k = model_cfg.get("top_k", 2)
         self.num_kernels = model_cfg.get("num_kernels", 6)

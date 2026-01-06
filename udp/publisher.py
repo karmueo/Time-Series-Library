@@ -1,9 +1,6 @@
 import socket
 import struct
-
-
-PRED_FLAG_HEAD = 0xBEEF
-PRED_FLAG_TAIL = 0x55AA
+import time
 
 
 class MulticastPublisher:
@@ -23,25 +20,76 @@ class MulticastPublisher:
         self.sock = sock
         return self
 
+    @staticmethod
+    def _to_bcd(value):
+        value = int(value) % 100
+        return ((value // 10) << 4) | (value % 10)
+
     def _checksum(self, payload):
         return sum(payload) & 0xFFFF
 
-    def build_packet(self, items):
-        self.seq = (self.seq + 1) & 0xFFFFFFFF
-        count = len(items)
-        header = struct.pack("=HBBIH", PRED_FLAG_HEAD, 1, 0, self.seq, count)
+    def _build_packet(self, item):
+        self.seq = (self.seq + 1) & 0xFFFF
+        now = time.localtime()
+        frac = time.time() % 1.0
+        sub_second = int(frac / 25e-6) & 0xFFFF
 
-        body = bytearray()
-        for item in items:
-            track_id = int(item["track_id"]) & 0xFFFF
-            ts_ms = int(item.get("timestamp_ms", 0)) & 0xFFFFFFFF
-            pred = int(item["pred"]) & 0xFF
-            prob_uav = float(item.get("prob_uav", 0.0))
-            prob_bird = float(item.get("prob_bird", 0.0))
-            body.extend(struct.pack("=HIBff", track_id, ts_ms, pred, prob_uav, prob_bird))
+        year = self._to_bcd(now.tm_year % 100)
+        month = self._to_bcd(now.tm_mon)
+        day = self._to_bcd(now.tm_mday)
+        hour = self._to_bcd(now.tm_hour)
+        minute = self._to_bcd(now.tm_min)
+        second = self._to_bcd(now.tm_sec)
+
+        frame_header = 0xA999
+        msg_type = 0
+        frame_length = 34
+        frame_seq = self.seq
+        system_id = 0
+        radar_id = 0
+        reserve = 0
+
+        header = struct.pack(
+            "=6H",
+            frame_header,
+            msg_type,
+            frame_length,
+            frame_seq,
+            system_id,
+            ((reserve & 0xFF) << 8) | (radar_id & 0xFF),
+        )
+        header += struct.pack("=H", (month << 8) | year)
+        header += struct.pack("=H", (hour << 8) | day)
+        header += struct.pack("=H", (second << 8) | minute)
+        header += struct.pack("=H", sub_second)
+        header += struct.pack("=HH", 0, 0)
+
+        pred = int(item.get("pred", -1))
+        if pred == 0:
+            class_major = 6
+            prob = float(item.get("prob_bird", 0.0))
+        elif pred == 1:
+            class_major = 7
+            prob = float(item.get("prob_uav", 0.0))
+        else:
+            class_major = 0xF
+            prob = 0.0
+        confidence = max(0, min(0xFFFF, int(round(prob * 1000))))
+
+        batch_id = int(item.get("batch_id", item.get("track_id", 0))) & 0xFFFF
+        base_day = int(item.get("base_day", now.tm_year * 10000 + now.tm_mon * 100 + now.tm_mday)) & 0xFFFFFFFF
+        time_25us = int(item.get("time_25us", 0)) & 0xFFFFFFFF
+
+        body = struct.pack("=H", 1)
+        body += struct.pack("=H", batch_id)
+        body += struct.pack("=I", base_day)
+        body += struct.pack("=I", time_25us)
+        body += struct.pack("=H", class_major)
+        body += struct.pack("=H", confidence)
+        body += struct.pack("=12H", *([0] * 12))
 
         checksum = self._checksum(header + body)
-        tail = struct.pack("=HH", checksum, PRED_FLAG_TAIL)
+        tail = struct.pack("=HH", checksum, 0x55AA)
         return header + body + tail
 
     def send(self, items):
@@ -49,5 +97,6 @@ class MulticastPublisher:
             raise RuntimeError("socket 未初始化，请先调用 open()")
         if not items:
             return
-        packet = self.build_packet(items)
-        self.sock.sendto(packet, (self.group, self.port))
+        for item in items:
+            packet = self._build_packet(item)
+            self.sock.sendto(packet, (self.group, self.port))

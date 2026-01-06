@@ -1,4 +1,5 @@
 import os
+import time
 import torch
 from models import Autoformer, Transformer, TimesNet, Nonstationary_Transformer, DLinear, FEDformer, \
     Informer, LightTS, Reformer, ETSformer, Pyraformer, PatchTST, MICN, Crossformer, FiLM, iTransformer, \
@@ -57,7 +58,10 @@ class Exp_Basic(object):
             self.model_dict['Mamba'] = Mamba
 
         self.device = self._acquire_device()
+        build_start = time.time()
+        print('Building model...')
         self.model = self._build_model().to(self.device)
+        print('Model built in {:.2f}s'.format(time.time() - build_start))
 
     def _build_model(self):
         raise NotImplementedError

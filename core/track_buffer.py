@@ -11,12 +11,17 @@ class TrackWindowBuffer:
         self.buffers = {}
         self.last_seen = {}
         self.last_timestamp = {}
+        self.since_last_infer = {}
+        self.has_inferred = {}
 
     def update(self, track_id, feature_vec, timestamp_s=None):
         if track_id not in self.buffers:
             self.buffers[track_id] = deque(maxlen=self.seq_len)
+            self.since_last_infer[track_id] = 0
+            self.has_inferred[track_id] = False
         self.buffers[track_id].append(feature_vec)
         self.last_seen[track_id] = time.time()
+        self.since_last_infer[track_id] += 1
         if timestamp_s is not None:
             self.last_timestamp[track_id] = timestamp_s
 
@@ -27,8 +32,10 @@ class TrackWindowBuffer:
             self.buffers.pop(tid, None)
             self.last_seen.pop(tid, None)
             self.last_timestamp.pop(tid, None)
+            self.since_last_infer.pop(tid, None)
+            self.has_inferred.pop(tid, None)
 
-    def build_batch(self, min_seq_len=1):
+    def build_batch(self, min_seq_len=1, window_step=0):
         track_ids = []
         sequences = []
         lengths = []
@@ -36,6 +43,9 @@ class TrackWindowBuffer:
             length = len(buf)
             if length < min_seq_len:
                 continue
+            if window_step > 0 and self.has_inferred.get(tid, False):
+                if self.since_last_infer.get(tid, 0) < window_step:
+                    continue
             seq = np.stack(list(buf), axis=0)
             if length > self.seq_len:
                 seq = seq[-self.seq_len:, :]
@@ -51,6 +61,25 @@ class TrackWindowBuffer:
         batch = np.stack(sequences, axis=0)
         lengths = np.asarray(lengths, dtype=np.int16)
         return track_ids, batch, lengths
+
+    def mark_inferred(self, track_ids):
+        for tid in track_ids:
+            if tid in self.since_last_infer:
+                self.since_last_infer[tid] = 0
+                self.has_inferred[tid] = True
+
+    def get_pending_progress(self, min_seq_len=1, window_step=0):
+        progress = {}
+        for tid, buf in self.buffers.items():
+            length = len(buf)
+            if not self.has_inferred.get(tid, False):
+                if length < min_seq_len:
+                    progress[tid] = (length, min_seq_len)
+            elif window_step > 0:
+                delta = self.since_last_infer.get(tid, 0)
+                if delta < window_step:
+                    progress[tid] = (delta, window_step)
+        return progress
 
     def get_last_timestamp(self, track_id):
         return self.last_timestamp.get(track_id)

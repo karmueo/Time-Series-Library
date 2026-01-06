@@ -3,30 +3,9 @@ from pathlib import Path
 
 import numpy as np
 
+from features.feature_config import FEATURE_MAP, get_feature_cols
 
-FEATURE_COLS = [
-    "高（目标-滤波后）", "径向距离", "方位", "俯仰",
-    "点迹距离", "点迹方位", "点迹俯仰",
-    "全速度", "径向速度", "方位速度", "俯仰速度",
-    "多普勒展宽", "JEM", "RCS",
-]
-
-FEATURE_MAP = {
-    "高（目标-滤波后）": "height_m",
-    "径向距离": "r_m",
-    "方位": "a_deg",
-    "俯仰": "e_deg",
-    "点迹距离": "pr_m",
-    "点迹方位": "pa_deg",
-    "点迹俯仰": "pe_deg",
-    "全速度": "vel_m_s",
-    "径向速度": "radial_vel_m_s",
-    "方位速度": "az_vel_deg_s",
-    "俯仰速度": "el_vel_deg_s",
-    "多普勒展宽": "doppler",
-    "JEM": "jem",
-    "RCS": "rcs_db",
-}
+FEATURE_COLS = get_feature_cols()
 
 
 class FeatureNormalizer:
@@ -38,7 +17,7 @@ class FeatureNormalizer:
     def from_stats_file(cls, stats_path, feature_cols=None):
         if not stats_path:
             return cls()
-        feature_cols = feature_cols or FEATURE_COLS
+        feature_cols = feature_cols or get_feature_cols()
         path = Path(stats_path)
         with path.open("r", encoding="utf-8") as f:
             stats = json.load(f)
@@ -69,7 +48,7 @@ class FeatureNormalizer:
 
 class FeatureExtractor:
     def __init__(self, normalizer=None, feature_cols=None, feature_map=None):
-        self.feature_cols = feature_cols or FEATURE_COLS
+        self.feature_cols = feature_cols or get_feature_cols()
         self.feature_map = feature_map or FEATURE_MAP
         self.normalizer = normalizer or FeatureNormalizer()
 

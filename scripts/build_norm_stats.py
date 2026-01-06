@@ -8,14 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
-FEATURE_COLS = [
-    "高（目标-滤波后）", "径向距离", "方位", "俯仰",
-    "点迹距离", "点迹方位", "点迹俯仰",
-    "全速度", "径向速度", "方位速度", "俯仰速度",
-    "多普勒展宽", "JEM", "RCS",
-]
-
+from features.feature_config import get_feature_cols
 
 def load_gbk_xls(path, feature_cols):
     df = pd.read_csv(path, sep="\t", encoding="gbk")
@@ -44,12 +37,15 @@ def main():
     parser.add_argument("--output", required=True, help="输出 stats.json 路径")
     parser.add_argument("--pattern", default="*.xls", help="文件匹配模式")
     parser.add_argument("--feature_cols", default="", help="逗号分隔的特征列名列表")
+    parser.add_argument("--feature_cols_path", default="", help="特征列配置文件路径(feature_cols.json)")
     args = parser.parse_args()
 
     if args.feature_cols:
         feature_cols = [c.strip() for c in args.feature_cols.split(",") if c.strip()]
+    elif args.feature_cols_path:
+        feature_cols = get_feature_cols(args.feature_cols_path)
     else:
-        feature_cols = FEATURE_COLS
+        feature_cols = get_feature_cols()
 
     files = collect_files(args.data_dir, args.pattern)
     if not files:
