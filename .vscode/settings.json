@@ -1,3 +1,9 @@
 {
-    "cmake.sourceDirectory": "/home/tl/work/T/Time-Series-Library/apps/cplusplus"
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.nosetestsEnabled": false,
+    "python.testing.pytestArgs": [
+        "apps/test_batch_inference.py"
+    ],
+    "python.testing.autoTestDiscoverOnSaveEnabled": true
 }

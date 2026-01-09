@@ -375,12 +375,19 @@ def main():
             batch_last_publish_ts.pop(bid, None)
             batch_ema_prob_uav.pop(bid, None)
 
+        # 批量推理优化：收集所有批号的待推理数据
+        all_batch_ids = []
+        all_track_ids = []
+        all_buffers = []
+        total_samples = 0
+
         for batch_id, buffer in list(batch_buffers.items()):
             buffer.cleanup()
             pending = buffer.get_pending_progress(min_seq_len=min_seq_len, window_step=args.window_step)
             if pending:
                 for tid, (count, needed) in pending.items():
                     print(f"batch_id={batch_id} track_id={tid} [{count}/{needed}]")
+
             track_ids, batch, lengths = buffer.build_batch(min_seq_len=min_seq_len, window_step=args.window_step)
             if batch is None:
                 continue
@@ -391,38 +398,61 @@ def main():
                 if (now - last_ts) * 1000 < args.publish_interval_ms:
                     continue
 
-            preds, probs = predictor.predict(batch, lengths)
-            items = []
-            for i, tid in enumerate(track_ids):
-                prob_uav = float(probs[i, 1]) if probs.shape[1] > 1 else float(probs[i, 0])
-                prob_bird = float(probs[i, 0]) if probs.shape[1] > 1 else 1.0 - prob_uav
-                last_ts = float(buffer.get_last_timestamp(tid) or 0.0)
-                items.append({
-                    "batch_id": batch_id,
-                    "track_id": tid,
-                    "timestamp_ms": int(last_ts * 1000),
-                    "time_25us": int(round(last_ts / 25e-6)),
-                    "pred": int(preds[i]),
-                    "prob_uav": prob_uav,
-                    "prob_bird": prob_bird,
-                })
+            all_batch_ids.append(batch_id)
+            all_track_ids.append(track_ids)
+            all_buffers.append((batch, lengths, buffer))
+            total_samples += len(track_ids)
 
-            if args.use_batch_ema and items:
-                alpha = max(0.0, min(1.0, float(args.ema_alpha)))
-                current_prob = float(np.mean([item["prob_uav"] for item in items]))
-                prev_prob = batch_ema_prob_uav.get(batch_id)
-                ema_prob = current_prob if prev_prob is None else alpha * current_prob + (1.0 - alpha) * prev_prob
-                batch_ema_prob_uav[batch_id] = ema_prob
-                batch_pred = 1 if ema_prob >= 0.5 else 0
-                for item in items:
-                    item["pred"] = batch_pred
-                    item["prob_uav"] = ema_prob
-                    item["prob_bird"] = 1.0 - ema_prob
+        # 批量推理：合并所有批号的数据一次性推理
+        if all_buffers:
+            merged_batch = np.concatenate([b[0] for b in all_buffers], axis=0)
+            merged_lengths = np.concatenate([b[1] for b in all_buffers], axis=0)
 
-            print(json.dumps({"batch_id": batch_id, "count": len(items), "items": items}, ensure_ascii=False))
-            publisher.send(items)
-            buffer.mark_inferred(track_ids)
-            batch_last_publish_ts[batch_id] = now
+            preds, probs = predictor.predict(merged_batch, merged_lengths)
+
+            # 分发结果到各个批号
+            sample_offset = 0
+            for idx, batch_id in enumerate(all_batch_ids):
+                track_ids = all_track_ids[idx]
+                buffer = all_buffers[idx][2]
+                num_samples = len(track_ids)
+
+                batch_preds = preds[sample_offset:sample_offset + num_samples]
+                batch_probs = probs[sample_offset:sample_offset + num_samples]
+
+                items = []
+                for i, tid in enumerate(track_ids):
+                    prob_uav = float(batch_probs[i, 1]) if batch_probs.shape[1] > 1 else float(batch_probs[i, 0])
+                    prob_bird = float(batch_probs[i, 0]) if batch_probs.shape[1] > 1 else 1.0 - prob_uav
+                    last_ts = float(buffer.get_last_timestamp(tid) or 0.0)
+                    items.append({
+                        "batch_id": batch_id,
+                        "track_id": tid,
+                        "timestamp_ms": int(last_ts * 1000),
+                        "time_25us": int(round(last_ts / 25e-6)),
+                        "pred": int(batch_preds[i]),
+                        "prob_uav": prob_uav,
+                        "prob_bird": prob_bird,
+                    })
+
+                if args.use_batch_ema and items:
+                    alpha = max(0.0, min(1.0, float(args.ema_alpha)))
+                    current_prob = float(np.mean([item["prob_uav"] for item in items]))
+                    prev_prob = batch_ema_prob_uav.get(batch_id)
+                    ema_prob = current_prob if prev_prob is None else alpha * current_prob + (1.0 - alpha) * prev_prob
+                    batch_ema_prob_uav[batch_id] = ema_prob
+                    batch_pred = 1 if ema_prob >= 0.5 else 0
+                    for item in items:
+                        item["pred"] = batch_pred
+                        item["prob_uav"] = ema_prob
+                        item["prob_bird"] = 1.0 - ema_prob
+
+                print(json.dumps({"batch_id": batch_id, "count": len(items), "items": items}, ensure_ascii=False))
+                publisher.send(items)
+                buffer.mark_inferred(track_ids)
+                batch_last_publish_ts[batch_id] = time.time()
+
+                sample_offset += num_samples
 
 
 if __name__ == "__main__":
