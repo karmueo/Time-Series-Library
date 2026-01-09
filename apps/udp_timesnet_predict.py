@@ -408,7 +408,9 @@ def main():
             merged_batch = np.concatenate([b[0] for b in all_buffers], axis=0)
             merged_lengths = np.concatenate([b[1] for b in all_buffers], axis=0)
 
+            inference_start = time.time()
             preds, probs = predictor.predict(merged_batch, merged_lengths)
+            inference_time_ms = (time.time() - inference_start) * 1000
 
             # 分发结果到各个批号
             sample_offset = 0
@@ -447,7 +449,12 @@ def main():
                         item["prob_uav"] = ema_prob
                         item["prob_bird"] = 1.0 - ema_prob
 
-                print(json.dumps({"batch_id": batch_id, "count": len(items), "items": items}, ensure_ascii=False))
+                print(json.dumps({
+                    "batch_id": batch_id,
+                    "count": len(items),
+                    "inference_time_ms": round(inference_time_ms, 2),
+                    "items": items
+                }, ensure_ascii=False))
                 publisher.send(items)
                 buffer.mark_inferred(track_ids)
                 batch_last_publish_ts[batch_id] = time.time()
