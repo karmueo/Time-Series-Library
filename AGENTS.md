@@ -12,7 +12,7 @@
 - 日志与 checkpoint 路径默认在 `./checkpoints/`，可通过参数覆盖；提交前清理大文件与无关缓存。
 
 ## 构建、测试与开发命令
-- 虚拟环境：`conda activate time-series`.
+- 虚拟环境：Jetson 使用 `uv` 的 `.venv`，x86-64 使用 `conda activate time-series`。
 - 最小训练示例：  
   `python run.py --task_name long_term_forecast --is_training 1 --model_id TimesNet_ETTh1 --model TimesNet --data ETTh1 --root_path ./dataset/ETT/ --data_path ETTh1.csv --features M --seq_len 96 --label_len 48 --pred_len 336 --itr 1`
 - 更推荐直接运行脚本：如 `bash scripts/long_term_forecast/ETT_script/TimesNet_ETTh1.sh`、`bash scripts/imputation/ETT_script/TimesNet_ETTh1.sh`、`bash scripts/anomaly_detection/PSM/TimesNet.sh`。
