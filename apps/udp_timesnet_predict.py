@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import sys
 import time
@@ -11,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.predictor import TimesNetPredictor
+from core.predictor import OnnxTimesNetPredictor, TimesNetPredictor
 from core.track_buffer import TrackWindowBuffer
 from features.extractor import FeatureNormalizer
 from features.feature_config import FEATURE_MAP, get_feature_cols
@@ -22,15 +23,15 @@ from udp.receiver import MulticastReceiver
 
 def parse_args():
     parser = argparse.ArgumentParser(description="组播航迹接收 + TimesNet 预测 + 组播发布")
-    parser.add_argument("--in_group", required=True, help="输入组播地址")
-    parser.add_argument("--in_port", type=int, required=True, help="输入端口")
+    parser.add_argument("--in_group", default="", help="输入组播地址")
+    parser.add_argument("--in_port", type=int, default=0, help="输入端口")
     parser.add_argument("--in_iface", default="0.0.0.0", help="输入网卡IP")
     parser.add_argument("--bind_ip", default="", help="绑定IP，默认0.0.0.0")
     parser.add_argument("--timeout", type=float, default=2.0, help="接收超时秒数")
     parser.add_argument("--skip_checksum", action="store_true", help="跳过累加和校验")
 
-    parser.add_argument("--out_group", required=True, help="输出组播地址")
-    parser.add_argument("--out_port", type=int, required=True, help="输出端口")
+    parser.add_argument("--out_group", default="", help="输出组播地址")
+    parser.add_argument("--out_port", type=int, default=0, help="输出端口")
     parser.add_argument("--out_iface", default="0.0.0.0", help="输出网卡IP")
     parser.add_argument("--ttl", type=int, default=1, help="组播TTL")
 
@@ -62,6 +63,10 @@ def parse_args():
     parser.add_argument("--print_features", action="store_true", help="打印送入模型的特征值")
     parser.add_argument("--use_batch_ema", action="store_true", help="同批号目标使用EMA平滑概率并统一判别")
     parser.add_argument("--ema_alpha", type=float, default=0.6, help="EMA平滑系数(0-1)")
+
+    parser.add_argument("--local_test", action="store_true", help="启用本地文件测试(替代组播)")
+    parser.add_argument("--local_test_path", default="", help="本地 .xls/.csv 路径")
+    parser.add_argument("--local_test_points", type=int, default=20, help="读取点数(默认前20)")
     return parser.parse_args()
 
 
@@ -71,8 +76,95 @@ def resolve_device(device):
     return device
 
 
+def _detect_delimiter(path: Path) -> str:
+    return "\t" if path.suffix.lower() == ".xls" else ","
+
+
+def _parse_float(value: str, field: str, line_no: int) -> float:
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise ValueError(f"第{line_no}行字段{field}无法转换为浮点数: {value}") from exc
+
+
+def load_local_trajectory(path: str, max_points: int, feature_cols: list[str]) -> list[np.ndarray]:
+    if max_points <= 0:
+        raise ValueError("local_test_points 必须大于 0")
+
+    file_path = Path(path)
+    if not file_path.is_file():
+        raise FileNotFoundError(f"本地文件不存在: {file_path}")
+
+    delimiter = _detect_delimiter(file_path)
+    features = []
+    with file_path.open("r", encoding="gbk") as f:
+        reader = csv.DictReader(f, delimiter=delimiter)
+        if not reader.fieldnames:
+            raise ValueError("本地文件缺少表头")
+        for line_no, row in enumerate(reader, start=2):
+            if len(features) >= max_points:
+                break
+            values = []
+            for col in feature_cols:
+                key = col if col in row else FEATURE_MAP.get(col, col)
+                raw = row.get(key, "")
+                raw = raw.strip() if isinstance(raw, str) else raw
+                if raw in ("", None):
+                    val = 0.0
+                else:
+                    val = _parse_float(str(raw), col, line_no)
+                if col in {"径向距离", "点迹距离", "全速度", "径向速度"}:
+                    val = val / 1000.0
+                values.append(val)
+            vec = np.asarray(values, dtype=np.float32)
+            features.append(vec)
+
+    if not features:
+        raise ValueError("本地文件无有效数据行")
+    return features
+
+
+def run_local_file_inference(args, feature_cols, normalizer, predictor):
+    local_features = load_local_trajectory(args.local_test_path, args.local_test_points, feature_cols)
+    if len(local_features) < args.seq_len:
+        raise ValueError(f"本地文件点数不足: {len(local_features)} < seq_len={args.seq_len}")
+
+    seq = np.stack(local_features[:args.seq_len], axis=0).astype(np.float32)
+    seq = np.asarray([normalizer.normalize(seq)], dtype=np.float32)
+    lengths = np.asarray([args.seq_len], dtype=np.int64)
+
+    preds, probs = predictor.predict(seq, lengths)
+    prob_uav = float(probs[0, 1]) if probs.shape[1] > 1 else float(probs[0, 0])
+    prob_bird = float(probs[0, 0]) if probs.shape[1] > 1 else 1.0 - prob_uav
+
+    item = {
+        "batch_id": 1,
+        "track_id": 1,
+        "timestamp_ms": 0,
+        "time_25us": 0,
+        "pred": int(preds[0]),
+        "prob_uav": prob_uav,
+        "prob_bird": prob_bird,
+    }
+    print(json.dumps({"batch_id": 1, "count": 1, "items": [item]}, ensure_ascii=False))
+
+
 def main():
     args = parse_args()
+    if args.local_test:
+        if not args.local_test_path:
+            raise ValueError("启用 --local_test 时必须提供 --local_test_path")
+        if args.local_test_points <= 0:
+            raise ValueError("--local_test_points 必须大于 0")
+    else:
+        if not args.in_group:
+            raise ValueError("未启用本地测试时必须提供 --in_group")
+        if args.in_port <= 0:
+            raise ValueError("未启用本地测试时必须提供 --in_port")
+        if not args.out_group:
+            raise ValueError("未启用本地测试时必须提供 --out_group")
+        if args.out_port <= 0:
+            raise ValueError("未启用本地测试时必须提供 --out_port")
     device = resolve_device(args.device)
     min_seq_len = max(1, min(args.min_seq_len, args.seq_len))
 
@@ -82,20 +174,6 @@ def main():
     batch_last_seen = {}
     batch_last_publish_ts = {}
     batch_ema_prob_uav = {}
-
-    receiver = MulticastReceiver(
-        group=args.in_group,
-        port=args.in_port,
-        iface=args.in_iface,
-        bind_ip=args.bind_ip,
-        timeout_s=args.timeout,
-    ).open()
-    publisher = MulticastPublisher(
-        group=args.out_group,
-        port=args.out_port,
-        iface=args.out_iface,
-        ttl=args.ttl,
-    ).open()
 
     model_cfg = {
         "seq_len": args.seq_len,
@@ -112,14 +190,39 @@ def main():
         "embed": args.embed,
         "freq": args.freq,
     }
-    predictor = TimesNetPredictor(
-        model_path=args.model_path,
-        model_name=args.model,
-        num_classes=args.num_classes,
-        device=device,
-        model_cfg=model_cfg,
-    )
+    model_path = Path(args.model_path)
+    if model_path.suffix.lower() == ".onnx":
+        predictor = OnnxTimesNetPredictor(
+            model_path=args.model_path,
+            device=device,
+        )
+    else:
+        predictor = TimesNetPredictor(
+            model_path=args.model_path,
+            model_name=args.model,
+            num_classes=args.num_classes,
+            device=device,
+            model_cfg=model_cfg,
+        )
     predictor.load(num_features=len(feature_cols))
+
+    if args.local_test:
+        run_local_file_inference(args, feature_cols, normalizer, predictor)
+        return
+
+    receiver = MulticastReceiver(
+        group=args.in_group,
+        port=args.in_port,
+        iface=args.in_iface,
+        bind_ip=args.bind_ip,
+        timeout_s=args.timeout,
+    ).open()
+    publisher = MulticastPublisher(
+        group=args.out_group,
+        port=args.out_port,
+        iface=args.out_iface,
+        ttl=args.ttl,
+    ).open()
 
     print("开始接收组播并预测...")
 

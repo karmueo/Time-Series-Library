@@ -1,0 +1,53 @@
+# TimesNet Predictor YAML Configuration
+# 所有参数可以通过命令行覆盖
+
+# 接收器配置 (组播接收)
+receiver:
+  group: "230.1.1.22"      # 输入组播地址
+  port: 8002               # 输入端口
+  iface: "0.0.0.0"         # 输入网卡接口
+  bind_ip: ""              # 绑定 IP (空表示所有)
+  timeout_s: 2.0           # 接收超时时间
+  skip_checksum: false     # 跳过校验和验证
+
+# 发布器配置 (组播发送)
+publisher:
+  group: "230.1.1.24"      # 输出组播地址
+  port: 8011               # 输出端口
+  iface: "0.0.0.0"         # 输出网卡接口
+  ttl: 1                   # 组播 TTL
+
+# 预测器配置 (ONNX 模型)
+predictor:
+  model_path: "/home/tl/work/T/Time-Series-Library/apps/cplusplus/models/timesnet.onnx"  # ONNX 模型文件路径（绝对路径）
+  num_classes: 2             # 类别数 (鸟/无人机)
+  seq_len: 20                # 序列长度
+  num_features: 14           # 特征数
+  use_gpu: false             # 是否使用 GPU (当前不支持)
+  gpu_device_id: "0"         # GPU 设备 ID
+  use_timesnet_input: true   # 使用 TimesNet 输入格式
+
+# 轨迹缓冲配置
+buffer:
+  seq_len: 20                # 序列长度
+  max_age_s: 10.0            # 轨迹最大保留时间 (秒)
+
+# 归一化配置
+normalizer:
+  stats_path: "mydataset/radar_augv3_stats.json"             # 归一化统计文件路径 (可选)
+
+# 推理配置
+inference:
+  min_seq_len: 20            # 最小序列长度
+  window_step: 0             # 窗口步长 (0=使用所有可用数据)
+  ema_alpha: 0.4             # EMA 平滑因子
+  publish_interval_ms: 0     # 发布间隔 (毫秒, 0=每次推理都发布)
+  print_targets: false       # 打印目标信息
+  print_features: false      # 打印特征信息
+  save_input_path: ""        # 保存推理输入向量的文件夹路径 (每批一个文件, 空表示不保存)
+
+# 本地测试配置 (启用后将使用本地 .xls/.csv 代替组播输入)
+local_test:
+  enabled: false             # 是否启用本地文件测试
+  xls_path: "mydataset/radar_augv3/uav/P1005_Sn955698_win0_20.xls"  # 本地文件路径
+  max_points: 20             # 读取点数 (默认前 20 个)
