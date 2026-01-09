@@ -167,7 +167,6 @@ scripts/augmentation/
 run_anylearn.py
 environment.txt
 
-.vscode/
 dataset
 mydataset
 .claude

@@ -1,0 +1,361 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python测试离线推理",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "apps/cplusplus/scripts/test_saved_input.py",
+            "args": [
+                "apps/cplusplus/tmp/input_20260108_175826_372_0.json",
+                "apps/cplusplus/models/timesnet.onnx",
+                "--use_gpu"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+        },
+        {
+            "name": "C++测试离线推理",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/cplusplus/build-debug/test_saved_input",
+            "args": [
+                "apps/cplusplus/tmp/input_20260108_175826_372_0.json",
+                "apps/cplusplus/models/timesnet.onnx",
+                "--use_gpu"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "为 gdb 启用整齐打印",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "将反汇编风格设置为 Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "c++版本接收组播->预测->发送组播",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/cplusplus/build-debug/TimesNetPredictor",
+            "args": [
+                "--config",
+                "${workspaceFolder}/apps/cplusplus/config.yaml"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "为 gdb 启用整齐打印",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "将反汇编风格设置为 Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "Run TimesNet Classification",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "args": [
+                "--task_name",
+                "classification",
+                "--is_training",
+                "1",
+                "--root_path",
+                "./dataset/FaceDetection/",
+                "--model_id",
+                "FaceDetection",
+                "--model",
+                "TimesNet",
+                "--data",
+                "UEA",
+                "--e_layers",
+                "2",
+                "--batch_size",
+                "16",
+                "--d_model",
+                "64",
+                "--d_ff",
+                "256",
+                "--top_k",
+                "3",
+                "--num_kernels",
+                "4",
+                "--des",
+                "Exp",
+                "--itr",
+                "1",
+                "--learning_rate",
+                "0.001",
+                "--train_epochs",
+                "30",
+                "--patience",
+                "10"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "预处理航迹数据",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/augment_uav_sliding.py",
+            "args": [
+                "--input_dir",
+                "./mydataset/radar",
+                "--output_dir",
+                "./mydataset/radar_augv3",
+                "--augment_class",
+                "bird,uav",
+                // "--force_class", "uav", // 所有文件被当做无人机，此时augment_class不起作用
+                "--window_size",
+                "20",
+                "--stride",
+                "5",
+                "--include_partial",
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "训练航迹分类 TimesNet 模型",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "args": [
+                "--task_name",
+                "classification",
+                "--is_training",
+                "1",
+                "--root_path",
+                "./mydataset/radar_augv3",
+                "--model_id",
+                "TrajGBK",
+                "--model",
+                "TimesNet",
+                "--data",
+                "trajxls",
+                "--train_ratio",
+                "0.8",
+                "--batch_size",
+                "128",
+                "--augmentation_ratio",
+                "2",
+                "--jitter",
+                "--scaling",
+                "--d_model",
+                "128",
+                "--n_heads",
+                "4",
+                "--d_ff",
+                "256",
+                "--top_k",
+                "3",
+                "--dropout",
+                "0.2",
+                "--freq",
+                "s",
+                "--learning_rate",
+                "0.001",
+                "--train_epochs",
+                "30",
+                "--num_workers",
+                "4",
+                "--patience",
+                "10",
+                "--loss",
+                "CE"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "测试航迹分类",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "args": [
+                "--task_name",
+                "classification", // 任务名称
+                "--is_training",
+                "0", // 是否训练，0表示测试模式
+                "--root_path",
+                "./mydataset/radar_augv2", // 数据集根路径
+                "--model_id",
+                "TrajGBK", // 模型ID标识
+                "--model",
+                "TimesNet", // 使用的模型
+                "--data",
+                "trajxls", // 数据集名称
+                "--seq_len",
+                "20", // 输入序列长度
+                "--label_len",
+                "48", // 标签长度
+                "--pred_len",
+                "0", // 预测长度
+                "--d_model",
+                "128", // 模型维度
+                "--n_heads",
+                "4", // 多头注意力头数
+                "--d_ff",
+                "256", // 前馈网络维度
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "预测推理",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/predict_uav.py",
+            "args": [
+                "--model_path",
+                "checkpoints/classification_TrajGBK_TimesNet_trajxls_ftM_sl20_ll48_pl0_dm128_nh4_el2_dl1_df256_expand2_dc4_fc1_ebtimeF_dtTrue_test_0/checkpoint.pth",
+                "--d_model",
+                "128",
+                "--n_heads",
+                "4",
+                "--d_ff",
+                "256",
+                "--top_k",
+                "3",
+                "--freq",
+                "s",
+                "--data_dir",
+                "./mydataset/radar_101uav/uav",
+                "--stats_path",
+                "./mydataset/radar_augv3_stats.json",
+                "--output",
+                "predictions.csv"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "生成归一化统计",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/build_norm_stats.py",
+            "args": [
+                "--data_dir",
+                "./mydataset/radar_augv3",
+                "--output",
+                "./mydataset/radar_augv3_stats.json"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "接收组播->预测->发送组播",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/udp_timesnet_predict.py",
+            "args": [
+                "--in_group",
+                "230.1.1.22",
+                "--in_port",
+                "8002",
+                "--in_iface",
+                "0.0.0.0",
+                "--out_group",
+                "230.1.1.24",
+                "--out_port",
+                "8011",
+                "--out_iface",
+                "0.0.0.0",
+                "--model_path",
+                "apps/cplusplus/models/timesnet.onnx",
+                // "checkpoints/classification_TrajGBK_TimesNet_trajxls_ftM_sl20_ll48_pl0_dm128_nh4_el2_dl1_df256_expand2_dc4_fc1_ebtimeF_dtTrue_test_0/checkpoint.pth",
+                "--seq_len",
+                "20",
+                "--min_seq_len",
+                "20",
+                "--d_model",
+                "128",
+                "--n_heads",
+                "4",
+                "--d_ff",
+                "256",
+                "--top_k",
+                "3",
+                "--freq",
+                "s",
+                "--stats_path",
+                "./mydataset/radar_augv3_stats.json",
+                "--use_batch_ema",
+                "--ema_alpha",
+                "0.4", // 最新的一次预测相比历史预测的权重
+                "--device",
+                "auto",
+                // "--print_targets"
+                "--local_test",
+                "--local_test_path",
+                "mydataset/radar_augv3/uav/P1005_Sn955698_win0_20.xls",
+                "--local_test_points",
+                "20"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "接收识别结果组播报文并打印",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/udp_classify_result_recv.py",
+            "args": [
+                "--group",
+                "230.1.1.24",
+                "--port",
+                "8011",
+                "--iface",
+                "0.0.0.0"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "分割航迹数据集",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/split_trajectory_dataset.py",
+            "args": [
+                "--root_dir",
+                "./mydataset/radar_augv3",
+                "--output_dir",
+                "./mydataset/radar_augv3_bird_test",
+                "--classes",
+                "bird",
+                "--split_value",
+                "13500",
+                "--mode",
+                "move"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
