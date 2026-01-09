@@ -260,6 +260,7 @@ def main():
         if args.out_port <= 0:
             raise ValueError("未启用本地测试时必须提供 --out_port")
     device = resolve_device(args.device)
+    print(f"使用设备: {device.upper()}")
     min_seq_len = max(1, min(args.min_seq_len, args.seq_len))
 
     feature_cols = get_feature_cols()
