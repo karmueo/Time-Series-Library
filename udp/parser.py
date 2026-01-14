@@ -9,6 +9,27 @@ TAR_STR = 26
 TAR_LEN = 160
 
 
+# WGS84 constants for ECEF -> LLA conversion
+WGS84_A = 6378137.0
+WGS84_E2 = 6.69437999014e-3
+
+
+def _ecef_to_lla(x_m, y_m, z_m):
+    # Iterative conversion for stable latitude/height estimation
+    lon = math.atan2(y_m, x_m)
+    p = math.hypot(x_m, y_m)
+    lat = math.atan2(z_m, p * (1.0 - WGS84_E2))
+    for _ in range(5):
+        sin_lat = math.sin(lat)
+        n = WGS84_A / math.sqrt(1.0 - WGS84_E2 * sin_lat * sin_lat)
+        alt = p / math.cos(lat) - n
+        lat = math.atan2(z_m, p * (1.0 - WGS84_E2 * (n / (n + alt))))
+    sin_lat = math.sin(lat)
+    n = WGS84_A / math.sqrt(1.0 - WGS84_E2 * sin_lat * sin_lat)
+    alt = p / math.cos(lat) - n
+    return math.degrees(lon), math.degrees(lat), alt
+
+
 def parse_target(data, start):
     # Word 13: 目标状态 (b0-b3)
     status_raw = struct.unpack("=B", data[start:start + 1])[0]
@@ -77,6 +98,17 @@ def parse_target(data, start):
     doppler = feat1
     jem = feat2
 
+    # Word 57/59/61: 站址信息（经度/纬度 1e-5°，高度 0.01m）
+    site_lon = struct.unpack("=i", data[start + 88:start + 92])[0] * 1e-5
+    site_lat = struct.unpack("=i", data[start + 92:start + 96])[0] * 1e-5
+    site_alt = struct.unpack("=i", data[start + 96:start + 100])[0] * 1e-2
+
+    # Word 73/75/77: 地心坐标（32-bit signed，0.01m）
+    x_ecef = struct.unpack("=i", data[start + 120:start + 124])[0] * 1e-2
+    y_ecef = struct.unpack("=i", data[start + 124:start + 128])[0] * 1e-2
+    z_ecef = struct.unpack("=i", data[start + 128:start + 132])[0] * 1e-2
+    tar_lon, tar_lat, tar_alt = _ecef_to_lla(x_ecef, y_ecef, z_ecef)
+
     return {
         "status": status,
         "trk_stat": status,
@@ -132,6 +164,12 @@ def parse_target(data, start):
         "JEM": jem,
         "目标大类": tar_big,
         "目标小类": tar_small,
+        "经（目标-滤波后）": tar_lon,
+        "纬（目标-滤波后）": tar_lat,
+        "高（目标-滤波后）": tar_alt,
+        "经（站址）": site_lon,
+        "纬（站址）": site_lat,
+        "高（站址）": site_alt,
     }
 
 

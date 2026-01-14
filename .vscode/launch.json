@@ -248,6 +248,25 @@
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "接收雷达引导的UDP组播JSON数据",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/udp_multicast_json_recv.py",
+            "args": [
+                "--group",
+                "230.1.88.51",
+                "--port",
+                "8003",
+                "--iface",
+                "192.168.1.112",
+                "--timeout",
+                "2",
+                "--strict"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

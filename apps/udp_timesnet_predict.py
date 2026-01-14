@@ -22,6 +22,45 @@ from udp.parser import parse_packet
 from udp.publisher import MulticastPublisher
 from udp.receiver import MulticastReceiver
 
+TRACK_COLUMNS = [
+    "雷达号",
+    "批号",
+    "是否融合",
+    "目标类型",
+    "航迹质量",
+    "时间",
+    "航迹历史",
+    "目标状态",
+    "经（站址）",
+    "纬（站址）",
+    "高（站址）",
+    "经（目标-滤波后）",
+    "纬（目标-滤波后）",
+    "高（目标-滤波后）",
+    "径向距离",
+    "方位",
+    "俯仰",
+    "点迹距离",
+    "点迹方位",
+    "点迹俯仰",
+    "全速度",
+    "径向速度",
+    "方位速度",
+    "俯仰速度",
+    "目标信噪比",
+    "RCS",
+    "目标流水号",
+    "识别信息小类",
+    "威胁度",
+    "数据处理序列号",
+    "多普勒展宽",
+    "JEM",
+    "距离单元号",
+    "滤波器号",
+    "接收波束号",
+    "",
+]
+
 
 def load_config(config_path: str) -> Dict[str, Any]:
     """加载 YAML 配置文件"""
@@ -47,17 +86,25 @@ def _merge_config_with_args(config: Dict[str, Any], args: argparse.Namespace) ->
             "group": "in_group",
             "port": "in_port",
             "iface": "in_iface",
+            "bind_ip": "bind_ip",
             "timeout_s": "timeout",
+            "skip_checksum": "skip_checksum",
         },
         "publisher": {
             "group": "out_group",
             "port": "out_port",
             "iface": "out_iface",
+            "ttl": "ttl",
         },
         "local_test": {
             "enabled": "local_test",
             "path": "local_test_path",
             "points": "local_test_points",
+        },
+        "track_save": {
+            "enabled": "save_tracks",
+            "output_dir": "save_dir",
+            "format": "save_format",
         },
         # 其他字段直接映射
         "buffer": None,
@@ -145,6 +192,9 @@ def parse_args():
     parser.add_argument("--publish_interval_ms", type=int, default=0, help="发布节流毫秒(0=不节流)")
     parser.add_argument("--print_targets", action="store_true", help="打印解析后的目标信息")
     parser.add_argument("--print_features", action="store_true", help="打印送入模型的特征值")
+    parser.add_argument("--print_batch_progress", action="store_true", default=True, help="打印batch/track进度信息")
+    parser.add_argument("--no_print_batch_progress", action="store_false", dest="print_batch_progress",
+                        help="不打印batch/track进度信息")
     parser.add_argument("--use_batch_ema", action="store_true", help="同批号目标使用EMA平滑概率并统一判别")
     parser.add_argument("--ema_alpha", type=float, default=0.6, help="EMA平滑系数(0-1)")
 
@@ -152,6 +202,11 @@ def parse_args():
     parser.add_argument("--local_test", action="store_true", help="启用本地文件测试(替代组播)")
     parser.add_argument("--local_test_path", default="", help="本地 .xls/.csv 路径")
     parser.add_argument("--local_test_points", type=int, default=20, help="读取点数(默认前20)")
+
+    # 轨迹保存配置
+    parser.add_argument("--save_tracks", action="store_true", help="按批号保存推理航迹")
+    parser.add_argument("--save_dir", default="./outputs/track", help="航迹保存目录")
+    parser.add_argument("--save_format", default="xls", choices=["xls", "csv"], help="保存格式(xls/csv)")
 
     # 解析命令行参数
     args = parser.parse_args()
@@ -218,6 +273,69 @@ def load_local_trajectory(path: str, max_points: int, feature_cols: list[str]) -
     return features
 
 
+def _format_time_value(value: float) -> str:
+    return f"{value:.6f}"
+
+
+def build_track_row(tar: dict) -> list:
+    time_value = tar.get("时间", tar.get("timestamp", 0.0))
+    # 航迹文件中的距离字段统一按 km 保存，避免与模型输入单位不一致
+    r_km = float(tar.get("滤波径向距离", tar.get("r_m", 0.0))) / 1000.0
+    pr_km = float(tar.get("点迹距离", tar.get("pr_m", 0.0))) / 1000.0
+    row = [
+        tar.get("雷达号", 0),
+        tar.get("目标批号", tar.get("batch_id", 0)),
+        tar.get("是否融合", 0),
+        tar.get("目标类型", tar.get("目标大类", tar.get("tar_big", 0))),
+        tar.get("航迹质量", 0),
+        _format_time_value(float(time_value)),
+        tar.get("航迹历史", 0),
+        tar.get("目标状态", 0),
+        tar.get("经（站址）", 0),
+        tar.get("纬（站址）", 0),
+        tar.get("高（站址）", 0),
+        tar.get("经（目标-滤波后）", 0),
+        tar.get("纬（目标-滤波后）", 0),
+        tar.get("高（目标-滤波后）", 0),
+        r_km,
+        tar.get("滤波方位", tar.get("a_deg", 0.0)),
+        tar.get("滤波俯仰", tar.get("e_deg", 0.0)),
+        pr_km,
+        tar.get("点迹方位", tar.get("pa_deg", 0.0)),
+        tar.get("点迹俯仰", tar.get("pe_deg", 0.0)),
+        tar.get("全速度", tar.get("vel_m_s", 0.0)),
+        tar.get("径向速度", tar.get("radial_vel_m_s", 0.0)),
+        tar.get("方位速度", tar.get("az_vel_deg_s", 0.0)),
+        tar.get("俯仰速度", tar.get("el_vel_deg_s", 0.0)),
+        tar.get("目标信噪比", tar.get("snr_db", 0.0)),
+        tar.get("RCS", tar.get("rcs_db", 0.0)),
+        tar.get("目标流水号", tar.get("tar_seq", 0)),
+        tar.get("目标小类", tar.get("tar_small", 0)),
+        tar.get("威胁度", 0),
+        tar.get("数据处理序列号", 0),
+        tar.get("多普勒展宽", tar.get("doppler", 0.0)),
+        tar.get("JEM", tar.get("jem", 0.0)),
+        tar.get("距离单元号", 0),
+        tar.get("滤波器号", 0),
+        tar.get("接收波束号", 0),
+        "",
+    ]
+    return row
+
+
+def write_track_file(path: Path, rows: list[list], file_format: str) -> None:
+    if file_format == "xls":
+        delimiter = "\t"
+        encoding = "gbk"
+    else:
+        delimiter = ","
+        encoding = "utf-8"
+    with path.open("w", encoding=encoding, newline="") as f:
+        writer = csv.writer(f, delimiter=delimiter)
+        writer.writerow(TRACK_COLUMNS)
+        writer.writerows(rows)
+
+
 def run_local_file_inference(args, feature_cols, normalizer, predictor):
     local_features = load_local_trajectory(args.local_test_path, args.local_test_points, feature_cols)
     if len(local_features) < args.seq_len:
@@ -269,6 +387,11 @@ def main():
     batch_last_seen = {}
     batch_last_publish_ts = {}
     batch_ema_prob_uav = {}
+    batch_rows = {}
+
+    if args.save_tracks:
+        save_dir = Path(args.save_dir).expanduser()
+        save_dir.mkdir(parents=True, exist_ok=True)
 
     model_cfg = {
         "seq_len": args.seq_len,
@@ -367,10 +490,19 @@ def main():
                 batch_buffers[batch_id] = buffer
             batch_last_seen[batch_id] = time.time()
             buffer.update(track_id, feat, timestamp_s=tar.get("timestamp"))
+            if args.save_tracks:
+                rows = batch_rows.setdefault(batch_id, [])
+                rows.append(build_track_row(tar))
 
         now = time.time()
         expired_batches = [bid for bid, ts in batch_last_seen.items() if now - ts > args.max_age_s]
         for bid in expired_batches:
+            if args.save_tracks:
+                rows = batch_rows.get(bid, [])
+                if len(rows) > args.seq_len:
+                    output_path = save_dir / f"batch_{bid}.{args.save_format}"
+                    write_track_file(output_path, rows, args.save_format)
+                batch_rows.pop(bid, None)
             batch_buffers.pop(bid, None)
             batch_last_seen.pop(bid, None)
             batch_last_publish_ts.pop(bid, None)
@@ -385,7 +517,7 @@ def main():
         for batch_id, buffer in list(batch_buffers.items()):
             buffer.cleanup()
             pending = buffer.get_pending_progress(min_seq_len=min_seq_len, window_step=args.window_step)
-            if pending:
+            if pending and args.print_batch_progress:
                 for tid, (count, needed) in pending.items():
                     print(f"batch_id={batch_id} track_id={tid} [{count}/{needed}]")
 
